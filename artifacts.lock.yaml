@@ -1,0 +1,7 @@
+---
+metadata: 
+  version: "1.0"
+artifacts:
+  - download_url: "https://github.com/jeremylong/DependencyCheck/releases/download/v11.1.0/dependency-check-11.1.0-release.zip"
+    checksum: "sha256:c5b5b9e592682b700e17c28f489fe50644ef54370edeb2c53d18b70824de1e22" 
+    filename: "dependency-check.zip"
