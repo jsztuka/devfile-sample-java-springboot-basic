@@ -1,19 +1,19 @@
-FROM registry.access.redhat.com/ubi9/go-toolset:1.23.6-1745328278 as check-payload-build
+FROM registry.access.redhat.com/ubi9/ubi:9.6-1747219013 as check-payload-build
 
 WORKDIR /opt/app-root/src
 
 ARG CHECK_PAYLOAD_VERSION=0.3.5
 
-RUN curl -s -L -o check-payload.tar.gz "https://github.com/openshift/check-payload/archive/refs/tags/${CHECK_PAYLOAD_VERSION}.tar.gz" && \
-    tar -xzf check-payload.tar.gz && rm check-payload.tar.gz && cd check-payload-${CHECK_PAYLOAD_VERSION} && \
-    CGO_ENABLED=0 go build -ldflags="-X main.Commit=${CHECK_PAYLOAD_VERSION}" -o /opt/app-root/src/check-payload-binary && \
-    chmod +x /opt/app-root/src/check-payload-binary
+# RUN curl -s -L -o check-payload.tar.gz "https://github.com/openshift/check-payload/archive/refs/tags/${CHECK_PAYLOAD_VERSION}.tar.gz" && \
+#     tar -xzf check-payload.tar.gz && rm check-payload.tar.gz && cd check-payload-${CHECK_PAYLOAD_VERSION} && \
+#     CGO_ENABLED=0 go build -ldflags="-X main.Commit=${CHECK_PAYLOAD_VERSION}" -o /opt/app-root/src/check-payload-binary && \
+#     chmod +x /opt/app-root/src/check-payload-binary
 
 # Container image that runs your code
-FROM docker.io/snyk/snyk:linux@sha256:5c7f8de797c870a171ad36c8ab38d17bcb4592ee4683d0e4640fea4c27e984fc as snyk
-FROM quay.io/enterprise-contract/ec-cli:snapshot@sha256:6491f75e335015b8e800ca4508ac0cd155aeaf3a89399bc98949f93860a3b0a5 AS ec-cli
-FROM ghcr.io/sigstore/cosign/cosign:v99.99.91@sha256:8caf794491167c331776203c60b7c69d4ff24b4b4791eba348d8def0fd0cc343 as cosign-bin
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.5-1745845495
+# FROM docker.io/snyk/snyk:linux@sha256:5c7f8de797c870a171ad36c8ab38d17bcb4592ee4683d0e4640fea4c27e984fc as snyk
+# FROM quay.io/enterprise-contract/ec-cli:snapshot@sha256:6491f75e335015b8e800ca4508ac0cd155aeaf3a89399bc98949f93860a3b0a5 AS ec-cli
+# FROM ghcr.io/sigstore/cosign/cosign:v99.99.91@sha256:8caf794491167c331776203c60b7c69d4ff24b4b4791eba348d8def0fd0cc343 as cosign-bin
+#FROM registry.access.redhat.com/ubi9/ubi-minimal:9.5-1745845495
 
 # Note that the version of OPA used by pr-checks must be updated manually to reflect conftest updates
 # To find the OPA version associated with conftest run the following with the relevant version of conftest:
@@ -26,10 +26,15 @@ ARG UMOCI_VERSION=v0.4.7
 
 ENV POLICY_PATH="/project"
 
-ADD https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm epel-release-latest-9.noarch.rpm
+#ADD https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm epel-release-latest-9.noarch.rpm
 
 # Build dependency offline to streamline build
-RUN rpm -Uvh epel-release-latest-9.noarch.rpm && \
-    microdnf -y --setopt=tsflags=nodocs --setopt=install_weak_deps=0 install \
-    findutils \
-    jq
+#rpm -Uvh epel-release-latest-9.noarch.rpm && \
+RUN dnf install -y jq
+
+RUN ls /
+RUN ls /cachi2/
+RUN ls /cachi2/output
+RUN ls /cachi2/output/deps
+RUN ls /cachi2/output/deps/generic
+#RUN cp /cachi2/output/deps/dependency-check.zip /var
