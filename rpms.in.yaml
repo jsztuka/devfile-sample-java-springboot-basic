@@ -1,0 +1,6 @@
+packages: [jq, python3-file-magic, python3-pip, findutils, skopeo, python3,] #clamav, clamd
+contentOrigin:
+  repofiles: ["./ubi.repo", "./epel-testing.repo"]
+arches:
+  - ppc64le
+  - amd64
