@@ -1,19 +1,56 @@
-# Creating an application with a Spring Boot code sample yeehaw
+# Konflux Integration Service
+The Konflux Integration Service is a Kubernetes operator to control the integration and testing of Konflux-managed
+Application Component builds in Red Hat Konflux.
 
-**Note:** The Spring Boot code sample uses the **8081** HTTP port.
+## Running, building and testing the operator
 
-Before you begin creating an application with this `devfile` code sample, it's helpful to understand the relationship between the `devfile` and `Dockerfile` and how they contribute to your build. You can find these files at the following URLs:
+This operator provides a [Makefile](Makefile) to run all the usual development tasks. This file can be used by cloning
+the repository and running `make` over any of the provided targets.
 
-* [Spring Boot `devfile.yaml`](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/devfile.yaml)
-* [Spring Boot `Dockerfile`](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/docker/Dockerfile)
+### Running the operator locally
 
-1. The `devfile.yaml` file has an [`image-build` component](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/devfile.yaml#L22-L28) that points to your `Dockerfile`.
-2. The [`docker/Dockerfile`](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/docker/Dockerfile) contains the instructions you need to build the code sample as a container image.
-3. The `devfile.yaml` [`kubernetes-deploy` component](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/devfile.yaml#L29-L41) points to a `deploy.yaml` file that contains instructions for deploying the built container image.
-4. The `devfile.yaml` [`deploy` command](https://github.com/devfile-samples/devfile-sample-java-springboot-basic/blob/main/devfile.yaml#L49-L56) completes the [outerloop](https://devfile.io/docs/2.2.0/innerloop-vs-outerloop) deployment phase by pointing to the `image-build` and `kubernetes-deploy` components to create your application.
+When testing locally (eg. a CRC cluster), the command `make run install` can be used to deploy and run the operator.
+If any change has been done in the code, `make manifests generate` should be executed before to generate the new resources
+and build the operator.
 
-### Additional resources
-* For more information about Spring Boot, see [Spring Boot](https://spring.io/projects/spring-boot).
-* For more information about devfiles, see [Devfile.io](https://devfile.io/).
-* For more information about the deployment outerloop, see [Devfile.io: Innerloop versus outerloop](https://devfile.io/docs/2.2.0/innerloop-vs-outerloop).
-* For more information about Dockerfiles, see [Dockerfile reference](https://docs.docker.com/engine/reference/builder/).
+### Build and push a new image
+
+To build the operator and push a new image to the registry, the following commands can be used:
+
+```shell
+$ make img-build
+$ make img-push
+```
+
+These commands will use the default image and tag. To modify them, new values for `TAG` and `IMG` environment variables
+can be passed. For example, to override the tag:
+
+```shell
+$ TAG=my-tag make img-build
+$ TAG=my-tag make img-push
+```
+
+Or, in the case the image should be pushed to a different repository:
+
+```shell
+$ IMG=quay.io/user/integration-service:my-tag make img-build
+$ IMG=quay.io/user/integration-service:my-tag make img-push
+```
+
+### Adding/updating a dependency
+
+This repo uses vendoring, please add dependencies in the following way:
+
+```shell
+go get example.com/dep@v1.2.3
+go mod tidy
+go mod vendor
+git add vendor/
+```
+
+If you don't vendor dependencies, `go vet` will fail build.
+
+### Running tests
+
+To test the code, simply run `make test`. This command will fetch all the required dependencies and test the code. The
+test coverage will be reported at the end, once all the tests have been executed.
