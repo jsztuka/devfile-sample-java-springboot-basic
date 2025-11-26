@@ -164,6 +164,7 @@ spec:
       workspaces:
       - name: basic-auth
         workspace: git-auth
+      - name: shared-workspace
     - name: prefetch-dependencies
       params:
       - name: input
