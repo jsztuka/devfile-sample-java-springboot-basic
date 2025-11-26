@@ -1,0 +1,9 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: rox-pipelinerun-test-
+spec:
+  pipelineSpec:
+   tasks:
+    - name: 

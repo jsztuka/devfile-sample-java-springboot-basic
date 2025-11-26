@@ -1,0 +1,74 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: rox-pipeline
+spec:
+
+  workspaces:
+    - name: shared-workspace
+
+  params:
+    - name: IMAGE
+      type: string
+      description: image to be build from the code
+      default: quay.io/jsztuka/simple-fbc:8b74591
+    - name: rox_central_endoint
+      type: string
+      description: The address:port tuple for RHACS Stackrox Central.
+      default: https://acs-d3t60hcejrms73e5dk6g.acs.rhcloud.com
+    - name: rox_config_dir
+      type: string
+      description: The path to the roxctl configuration directory
+      default: /roxctl-config
+    - name: rox_image
+      type: string
+      description: The Red Hat Advanced Cluster Security container image
+      default: quay.io/stackrox-io/roxctl:4.4.2
+
+  tasks:
+    - name: rhacs-authenticate
+      taskRef:
+        name: rhacs-m2m-authenticate
+        kind: Task
+      params:
+        - name: insecure-skip-tls-verify
+          value: "true"
+        - name: rox_config_dir
+          value: $(params.rox_config_dir)
+      workspaces:
+        - name: roxctl-config
+          workspace: shared-workspace
+
+    # scan image for vulns using RHACS
+    - name: scan-image
+      taskRef:
+        name: rhacs-image-scan
+        kind: Task
+      workspaces:
+      - name: roxctl-config
+        workspace: shared-workspace
+      params:
+      - name: image
+        value: "$(params.IMAGE)"
+      - name: insecure-skip-tls-verify
+        value: "true" # stackrox to OCP image registry x509 fail...
+      - name: rox_config_dir
+        value: $(params.rox_config_dir)
+      - name: rox_image
+        value: $(params.rox_image)
+    - name: show-output
+      taskSpec:
+        steps:
+          - name: step-show
+        image: quay.io/konflux-ci/konflux-test:v1.4.28@sha256:4a5423e125fc28db800421422d9933290dc4b62a22401d74cd3348c03107a5d9
+        script: |
+          #!/usr/bin/env bash
+          echo "Lets see what is there"
+          ls -al
+          ls roxctl_config/
+      workspaces:
+      - name: roxctl-config
+        workspace: shared-workspace
+
+
