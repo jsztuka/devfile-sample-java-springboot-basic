@@ -14,6 +14,7 @@ metadata:
     appstudio.openshift.io/application: test-1050-with-power
     appstudio.openshift.io/component: devfile-sample-java-springboot-basic
     pipelines.appstudio.openshift.io/type: build
+    pipelinesascode.tekton.dev/task: "[rox/auth-task.yaml]"
   name: devfile-sample-java-springboot-basic-on-push
   namespace: jsztuka-tenant
 spec:
