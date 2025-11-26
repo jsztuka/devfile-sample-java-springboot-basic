@@ -4,6 +4,20 @@ kind: PipelineRun
 metadata:
   generateName: rox-pipelinerun-test-
 spec:
+  workspaces:
+    - name: shared-workspace
+      emptyDir: {}
   pipelineSpec:
    tasks:
-    - name: 
+    - name: rhacs-authenticate
+      taskRef:
+        name: rhacs-m2m-authenticate
+        kind: Task
+      params:
+        - name: insecure-skip-tls-verify
+          value: "true"
+        - name: rox_config_dir
+          value: $(params.rox_config_dir)
+      workspaces:
+        - name: roxctl-config
+          workspace: shared-workspace
