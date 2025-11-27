@@ -10,7 +10,7 @@ metadata:
     pipelinesascode.tekton.dev/max-keep-runs: "3"
     pipelinesascode.tekton.dev/on-cel-expression: event == "pull_request" && target_branch
       == "main"
-    pipelinesascode.tekton.dev/task: "[rox/auth-task.yaml]"
+    pipelinesascode.tekton.dev/task: "[rox/auth-task.yaml, rox/image-scan.yaml]"
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: rox
@@ -164,6 +164,51 @@ spec:
       workspaces:
       - name: basic-auth
         workspace: git-auth
+    - name: rhacs-authenticate
+      taskRef:
+        name: rhacs-m2m-authenticate
+        kind: Task
+      params:
+        - name: insecure-skip-tls-verify
+          value: "true"
+        - name: rox_config_dir
+          value: /roxctl-config
+      workspaces:
+        - name: roxctl-config
+          workspace: shared-workspace
+    - name: scan-image
+      taskRef:
+        name: rhacs-image-scan
+        kind: Task
+      runAfter:
+      - rhacs-authenticate
+      workspaces:
+      - name: roxctl-config
+        workspace: shared-workspace
+      params:
+      - name: image
+        value: "quay.io/jsztuka/simple-fbc:8b74591"
+      - name: insecure-skip-tls-verify
+        value: "true" # stackrox to OCP image registry x509 fail...
+      - name: rox_config_dir
+        value: /roxctl-config
+      - name: rox_image
+        value: quay.io/stackrox-io/roxctl:4.4.2
+    - name: show-output
+      runAfter:
+      - scan-image
+      taskSpec:
+        steps:
+         - name: ahoj
+           image: quay.io/konflux-ci/konflux-test:v1.4.28@sha256:4a5423e125fc28db800421422d9933290dc4b62a22401d74cd3348c03107a5d9
+           script: |
+            #!/usr/bin/env bash
+            echo "Lets see what is there"
+            cd workspace
+            ls roxctl-config
+      workspaces:
+      - name: roxctl-config
+        workspace: shared-workspace
     - name: prefetch-dependencies
       params:
       - name: input
@@ -595,10 +640,20 @@ spec:
       optional: true
     - name: netrc
       optional: true
+    - name: shared-workspace
+      optional: false
   taskRunTemplate:
     serviceAccountName: build-pipeline-devfile-sample-java-springboot-basic-be2e8
   workspaces:
   - name: git-auth
     secret:
       secretName: '{{ git_auth_secret }}'
+  - name: shared-workspace
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Mi
 status: {}
