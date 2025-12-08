@@ -1,0 +1,347 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: roxctl-scan
+  labels:
+    app.kubernetes.io/version: "0.1"
+spec:
+  description: >-
+    Exchanges a kubernetes service account token against a Red Hat Advanced Cluster Security short-lived token.
+  params:
+    - name: image-digest
+      description: Image digest to scan.
+      default: ""
+    - name: rox_image
+      description: Image providing the roxctl tool.
+      default: 'registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel8@sha256:d6d5e50d1deda1e7b232d4e3f60fda6f3d27266b6fc007c8ec48a324e1c6c15c'
+    - name: rox_central_endpoint
+      description: The address:port tuple for RHACS Stackrox Central.
+      type: string
+      default: https://acs-d3t60hcejrms73e5dk6g.acs.rhcloud.com
+    - name: image-url
+      type: string
+      description: |
+        Full name of image to scan.
+
+        SHA 256 digest may be included to ensure scan of sequental runs with same tag.
+        Examples: 'gcr.io/rox/sample:5.0-rc1', '$(params.IMAGE)', '$(params.IMAGE)@$(tasks.buildah.results.IMAGE_DIGEST)'
+      default: ""
+    - name: insecure-skip-tls-verify
+      description: |
+        Do not verify TLS certificates.
+
+        When set to "true", skip verifying the TLS certs of the Central endpoint.
+      type: string
+      default: "false"
+    - name: output_format
+      type: string
+      description: Results output format (json | csv | table)
+      default: json
+    - name: rox_token_file
+      description: |
+        Path to the API Token file (if authentication through API token).
+        Mutually exclusive with rox_config_dir.
+        The path must be prefixed with "/rox-api-token-auth".
+        Example "/rox-api-token-auth/rox_api_token"
+      type: string
+      default: ""
+    - name: rox_config_dir
+      type: string
+      description: |
+        Path to the roxtl config directory within the roxctl-config workspace.
+        The path must be prefixed with "/roxctl-config".
+      default: ""
+  results:
+    - name: TEST_OUTPUT
+      description: Tekton task test output.
+    - name: SCAN_OUTPUT
+      description: Clair scan result.
+    - name: IMAGES_PROCESSED
+      description: Images processed in the task.
+    - name: REPORTS
+      description: Mapping of image digests to report digests
+  stepTemplate:
+    env:
+      - name: INSECURE
+        value: $(params.insecure-skip-tls-verify)
+      - name: ROX_ENDPOINT
+        value: $(params.rox_central_endpoint)
+      - name: ROX_CONFIG_DIR
+        value: /tekton/home
+      - name: ROX_EXECUTION_ENV
+        value: Tekton
+  steps:
+    - name: exchange-service-account-token
+      workingDir: /tekton/home
+      image: $(params.rox_image)
+      volumeMounts:
+        - name: token-vol
+          mountPath: /service-account-token
+      args:
+        - central
+        - m2m
+        - exchange
+        - --insecure-skip-tls-verify=$(INSECURE)
+        - --token-file=/service-account-token/token
+    - name: get-image-manifests
+      image: quay.io/konflux-ci/konflux-test:v1.4.43@sha256:0bcc59de96bdc6f989d5c06d142d674da5d495c450a760fdd7d6fd333433342e
+      # the clair-in-ci image neither has skopeo or jq installed. Hence, we create an extra step to get the image manifest digests
+      computeResources:
+        limits:
+          memory: 512Mi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . /utils.sh
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        # strip new-line escape symbol from parameter and save it to variable
+        imageanddigest=$(echo $imagewithouttag@$IMAGE_DIGEST)
+        echo "Inspecting raw image manifest $imageanddigest."
+
+        # Get the arch and image manifests by inspecting the image. This is mainly for identifying image indexes
+        image_manifests=$(get_image_manifests -i "${imageanddigest}")
+        if [ -n "$image_manifests" ]; then
+          echo "$image_manifests" | jq -r 'to_entries[] | "\(.key) \(.value)"' | while read -r arch arch_sha; do
+            echo "$arch_sha" > /tekton/home/image-manifest-$arch.sha
+          done
+        else
+          echo "Failed to get image manifests from image \"$imageanddigest\""
+          note="Task $(context.task.name) failed: Failed to get image manifests from image \"$imageanddigest\". For details, check Tekton task log."
+          ERROR_OUTPUT=$(make_result_json -r "ERROR" -t "$note")
+          echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+    - name: rox-image-scan
+      image: $(params.rox_image)
+      env:
+        - name: HOME
+          value: /tekton/home
+        - name: IMAGE
+          value: $(params.image-url)
+        - name: INSECURE
+          value: $(params.insecure-skip-tls-verify)
+        - name: OUTPUT
+          value: $(params.output_format)
+        - name: ROX_CONFIG_DIR
+          value: $(params.rox_config_dir)
+        - name: ROX_API_TOKEN_FILE
+          value: $(params.rox_token_file)
+        - name: ROX_ENDPOINT
+          value: $(params.rox_central_endpoint)
+        - name: ROX_EXECUTION_ENV
+          value: Tekton
+      script: |
+        #!/usr/bin/env bash
+          roxctl image scan --insecure-skip-tls-verify=$INSECURE --output=$OUTPUT --image=$IMAGE | tee /tekton/home/rox-output.json
+          if [ ! -s /tekton/home/rox-output.json ]; then
+            echo "Failed to scan image using Roxctl"
+            note="Task $(context.task.name) failed: Failed to scan image using Roxctl image: $IMAGE For details, check Tekton task log."
+            ERROR_OUTPUT=$note
+            echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+            exit 0
+          fi
+          
+    - name: proccess-output
+      image: quay.io/konflux-ci/konflux-test:v1.4.43@sha256:0bcc59de96bdc6f989d5c06d142d674da5d495c450a760fdd7d6fd333433342e
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+      workingDir: /tekton/home
+      script: |
+        #!/usr/bin/env bash
+
+        set -o errexit
+        set -o nounset
+        set -o pipefail
+        # shellcheck source=/utils.sh
+        . /utils.sh
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        images_processed_template='{"image": {"pullspec": "'"$IMAGE_URL"'", "digests": [%s]}}'
+        digests_processed=()
+
+        for sha_file in image-manifest-*.sha; do
+          if [ -e "$sha_file" ]; then
+            arch_sha=$(cat "$sha_file")
+            arch=$(basename "$sha_file" | sed 's/image-manifest-//;s/.sha//')
+            arch_specific_digest="$imagewithouttag@$arch_sha"
+
+            digests_processed+=("\"$arch_sha\"")
+          fi
+        done
+
+        # If the image is an Image Index, also add the Image Index digest to the list.
+        if [[ "${digests_processed[*]}" != *"$IMAGE_DIGEST"* ]]; then
+          digests_processed+=("\"$IMAGE_DIGEST\"")
+        fi
+        digests_processed_string=$(IFS=,; echo "${digests_processed[*]}")
+
+        images_processed=$(echo "${images_processed_template/\[%s]/[$digests_processed_string]}")
+        echo "$images_processed" > images-processed.json
+    - name: oci-attach-report
+      image: quay.io/konflux-ci/oras:latest@sha256:4542f5a2a046ca36653749a8985e46744a5d2d36ee10ca14409be718ce15129e
+      workingDir: /tekton/home
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+      script: |
+        #!/usr/bin/env bash
+
+        set -o errexit
+        set -o nounset
+        set -o pipefail
+
+        if ! compgen -G "rox-output*.json" > /dev/null; then
+          echo 'No Rox reports generated. Skipping upload.'
+          exit 0
+        fi
+
+        echo "Selecting auth"
+        select-oci-auth "$IMAGE_URL" > "$HOME/auth.json"
+
+        repository="${IMAGE_URL/:*/}"
+
+        arch() {
+          report_file="$1"
+          arch="${report_file/*-}"
+          echo "${arch/.json/}"
+        }
+
+        MEDIA_TYPE='application/vnd.redhat.rox-report+json'
+
+        reports_json=""
+        for f in image-manifest-*.sha; do
+          digest=$(cat "image-manifest-$(arch "$f")")
+          image_ref="${repository}@${digest}"
+          echo "Attaching $f to ${image_ref}"
+          if ! report_digest="$(retry oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
+            "$HOME/auth.json" --artifact-type "${MEDIA_TYPE}" "${image_ref}" "$f:${MEDIA_TYPE}")"
+          then
+            echo "Failed to attach ${f} to ${image_ref}"
+            exit 1
+          fi
+          # shellcheck disable=SC2016
+          reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
+        done
+        echo "${reports_json}" > reports.json
+    - name: conftest-vulnerabilities
+      image: quay.io/konflux-ci/konflux-test:v1.4.43@sha256:0bcc59de96bdc6f989d5c06d142d674da5d495c450a760fdd7d6fd333433342e
+      # per https://kubernetes.io/docs/concepts/containers/images/#imagepullpolicy-defaulting
+      # the cluster will set imagePullPolicy to IfNotPresent
+      computeResources:
+        limits:
+          memory: 2Gi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        . /utils.sh
+        trap 'handle_error $(results.TEST_OUTPUT.path)' EXIT
+
+        rox_result_files=$(ls /tekton/home/rox-output*.json)
+        if [ -z "$rox_result_files" ]; then
+          echo "Previous step [get-vulnerabilities] failed: No rox-output files found in /tekton/home."
+        fi
+
+        missing_vulnerabilities_files=""
+        for file in $rox_result_files; do
+          file_suffix=$(basename "$file" | sed 's/rox-result-//;s/.json//')
+          if [ ! -s "$file" ]; then
+            echo "Previous step [get-vulnerabilities] failed: $file is empty."
+          else
+            /usr/bin/conftest test --no-fail $file \
+            --policy /project/roxctl/vulnerabilities-check.rego --namespace required_checks \
+            --output=json | tee /tekton/home/rox-vulnerabilities-$file_suffix.json || true
+          fi
+
+          #check for missing "rox-vulnerabilities-<arch>/image-index" file and create a string
+          if [ ! -f "/tekton/home/rox-vulnerabilities-$file_suffix.json" ]; then
+            missing_vulnerabilities_files+="${missing_vulnerabilities_files:+, }/tekton/home/rox-vulnerabilities-$file_suffix.json"
+          fi
+        done
+
+        if [ -n "$missing_vulnerabilities_files" ]; then
+          note="Task $(context.task.name) failed: $missing_vulnerabilities_files did not generate. For details, check Tekton task log."
+          TEST_OUTPUT=$(make_result_json -r "ERROR" -t "$note")
+          echo "$missing_vulnerabilities_files did not generate correctly. For details, check conftest command in Tekton task log."
+          echo "${TEST_OUTPUT}" | tee $(results.TEST_OUTPUT.path)
+          exit 0
+        fi
+
+        scan_result='{"vulnerabilities":{"critical":0, "high":0, "medium":0, "low":0}, "unpatched_vulnerabilities":{"critical":0, "high":0, "medium":0, "low":0}}'
+        for file in /tekton/home/rox-vulnerabilities-*.json; do
+            result=$(jq -rce \
+                '{
+                    vulnerabilities:{
+                      critical: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_critical_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      high: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_high_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      medium: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_medium_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      low: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_low_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                    },
+                    unpatched_vulnerabilities:{
+                      critical: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_unpatched_critical_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      high: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_unpatched_high_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      medium: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_unpatched_medium_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                      low: (.[] | .warnings? // [] | map(select(.metadata.details.name=="roxctl_unpatched_low_vulnerabilities").metadata."vulnerabilities_number" // 0)| add // 0),
+                    }
+                }' "$file")
+
+            scan_result=$(jq -s -rce \
+                  '.[0].vulnerabilities.critical += .[1].vulnerabilities.critical |
+                  .[0].vulnerabilities.high += .[1].vulnerabilities.high |
+                  .[0].vulnerabilities.medium += .[1].vulnerabilities.medium |
+                  .[0].vulnerabilities.low += .[1].vulnerabilities.low |
+                  .[0].unpatched_vulnerabilities.critical += .[1].unpatched_vulnerabilities.critical |
+                  .[0].unpatched_vulnerabilities.high += .[1].unpatched_vulnerabilities.high |
+                  .[0].unpatched_vulnerabilities.medium += .[1].unpatched_vulnerabilities.medium |
+                  .[0].unpatched_vulnerabilities.low += .[1].unpatched_vulnerabilities.low |
+                  .[0]' <<<"$scan_result $result")
+        done
+
+        echo "$scan_result" | tee "$(results.SCAN_OUTPUT.path)"
+
+        cat /tekton/home/images-processed.json | tee $(results.IMAGES_PROCESSED.path)
+        # shellcheck disable=SC2154
+        cat /tekton/home/reports.json > "$(results.REPORTS.path)"
+
+        note="Task $(context.task.name) completed: Refer to Tekton task result SCAN_OUTPUT for vulnerabilities scanned by Rox."
+        TEST_OUTPUT=$(make_result_json -r "SUCCESS" -t "$note")
+        echo "${TEST_OUTPUT}" | tee $(results.TEST_OUTPUT.path)
+  volumes:
+    - name: token-vol
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: rhacs
+              path: token
+              expirationSeconds: 3600
+    - name: trusted-ca
+      configMap:
+        name: $(params.ca-trust-config-map-name)
+        items:
+          - key: $(params.ca-trust-config-map-key)
+            path: ca-bundle.crt
+        optional: true
