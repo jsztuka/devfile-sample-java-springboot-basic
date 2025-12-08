@@ -27,7 +27,7 @@ spec:
     - name: rox_central_endpoint
       description: The address:port tuple for RHACS Stackrox Central.
       type: string
-      default: central.stackrox.svc:443
+      default: https://acs-d3t60hcejrms73e5dk6g.acs.rhcloud.com
     - name: insecure-skip-tls-verify
       description: |
         Do not verify TLS certificates.
