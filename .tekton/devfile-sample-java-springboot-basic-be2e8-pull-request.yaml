@@ -30,6 +30,8 @@ spec:
     value: 5d
   - name: dockerfile
     value: Dockerfile
+  timeouts:
+    pipeline: "0h0m60s"
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
@@ -164,7 +166,6 @@ spec:
       workspaces:
       - name: basic-auth
         workspace: git-auth
-      - name: shared-workspace
     - name: prefetch-dependencies
       params:
       - name: input
